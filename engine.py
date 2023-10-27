@@ -225,7 +225,7 @@ def plot_image(ax, img, norm):
     img = img.astype('uint8')
     ax.imshow(img)
 
-def plot_result(image, boxes, logits, c, ax, prob_true):
+def plot_result(image, boxes, logits, c, ax, prob_true, class_name, target_label):
     out_bbox = boxes[0]
 
     # remove zero-padding
@@ -244,19 +244,31 @@ def plot_result(image, boxes, logits, c, ax, prob_true):
     # -------------------------
     pil_img = image.permute(1,2,0).detach().cpu().numpy()
     prob, pred_cls = probas[keep].max(dim=-1)
+    label_list = [] 
+    for i in range(len(target_label)):
+        target_label[i] += 1    
+        target_label[i] = torch.clamp(target_label[i], max=20)
+        label_list.append(class_name[str(target_label[i].item())])
     boxes = bboxes_scaled0[keep]
 
     image = plot_image(ax, pil_img, True)
     if prob is not None and boxes is not None:
-        for p, (xmin, ymin, xmax, ymax) in zip(prob, boxes.tolist()):
+        for p, (xmin, ymin, xmax, ymax), label in zip(prob, boxes.tolist(), label_list):
             ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
                                        fill=False, color=c, linewidth=3))
             if prob_true:
                 ax.text(xmin, ymin, f'{p.item():0.2f}', fontsize=10, bbox=dict(facecolor='y', alpha=0.5))
+            else:
+                ax.text(xmin, ymin, label, fontsize=10, bbox=dict(facecolor='y', alpha=0.5))
 
 @torch.no_grad()
 def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
     from torchvision.transforms import ToPILImage
+    class_name = {'1':'aeroplane','2':'bicycle','3':'bird','4':'boat',
+                  '5':'bottle','6':'bus','7':'car', '8':'cat',
+                  '9':'chair','10':'cow', '11':'diningtable','12':'dog',
+                  '13':'horse','14':'motorbike','15':'person','16':'pottedplant',
+                  '17':'sheep', '18':'sofa', '19':'train', '20':'tvmonitor'}
     output_dir = 'vis'
     os.makedirs(output_dir, exist_ok=True)
     model.eval()
@@ -282,14 +294,14 @@ def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_d
         boxes = predictied_boxes
         logits = logits.cpu()
         c = 'g'
-        plot_result(image, boxes, logits, c, ax, True)
+        plot_result(image, boxes, logits, c, ax, True, class_name, targets[0]['labels']
         # -------------------------
         # GT Results
         image = samples.tensors[0:1][0]
         boxes = targets[0]['boxes'].unsqueeze(0)
         logits = torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits)
         c = 'r'
-        plot_result(image, boxes, logits, c, ax, False)
+        plot_result(image, boxes, logits, c, ax, False, class_name, targets[0]['labels'])
         # -------------------------
         ax.set_aspect('equal')
         ax.set_axis_off()

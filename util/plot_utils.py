@@ -158,7 +158,7 @@ def plot_image(ax, img, norm):
         img = (img * 255)
     img = img.astype('uint8')
     ax.imshow(img)
-
+    ax.axis('off')
 
 def rescale_bboxes(out_bbox, size):
     img_w, img_h = size
@@ -166,24 +166,24 @@ def rescale_bboxes(out_bbox, size):
     b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32).to(out_bbox)
     return b
 
-def plot_prediction(image, boxes, logits, ax=None, plot_prob=True):
+def plot_prediction(image, boxes, logits, c, ax=None, plot_prob=True):
     bboxes_scaled0 = rescale_bboxes(boxes[0], list(image.shape[2:])[::-1])
     probas = logits.softmax(-1)[0, :, :-1]
     keep = probas.max(-1).values > 0.01
     if ax is None:
         ax = plt.gca()
-    plot_results(image[0].permute(1, 2, 0).detach().cpu().numpy(), probas[keep], bboxes_scaled0[keep], ax, plot_prob=plot_prob)
+    plot_results(image[0].permute(1, 2, 0).detach().cpu().numpy(), probas[keep], bboxes_scaled0[keep], ax, c, plot_prob=plot_prob)
 
 
-def plot_results(pil_img, prob, boxes, ax, plot_prob=True, norm=True):
+def plot_results(pil_img, prob, boxes, ax, c, plot_prob=True, norm=True):
     from matplotlib import pyplot as plt
     image = plot_image(ax, pil_img, norm)
     if prob is not None and boxes is not None:
         for p, (xmin, ymin, xmax, ymax) in zip(prob, boxes.tolist()):
             ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
-                                       fill=False, color='r', linewidth=1))
+                                       fill=False, color=c, linewidth=1))
             if plot_prob:
                 text = f'{p:0.2f}'
                 ax.text(xmin, ymin, text, fontsize=15,
                         bbox=dict(facecolor='yellow', alpha=0.5))
-    ax.grid('off')
+    # ax.grid(off)  # 그리드를 꺼줍니다.

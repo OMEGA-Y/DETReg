@@ -1,0 +1,29 @@
+{
+    "configurations": {
+        "vis": {
+            "adapter": "debugpy",
+            "configuration": {
+                "name": "vis: Launch",
+                "type": "python",
+                "request": "launch",
+                "cwd": "~/workspace/DETReg/",
+                "python": "~/.conda/envs/det117/bin/python",
+                "stopOnEntry": true,
+                "console": "externalTerminal",
+                "debugOptions": [],
+                "program": "~/workspace/DETReg/main.py",
+                "env": {
+                    "CUDA_VISIBLE_DEVICES": "0"
+                },
+                "args": [
+                    "--output_dir", "exps/DETReg_fine_tune_full_pascal",
+                    "--dataset_file", "voc",
+                    "--dataset", "voc",
+                    "--eval_every", "10",
+                    "--pretrain", "exps/DETReg_fine_tune_full_pascal/checkpoint0099.pth",
+                    "--viz"
+                ]
+            }
+        }
+    }
+}

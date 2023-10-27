@@ -14,6 +14,14 @@ import math
 import os
 import sys
 from typing import Iterable
+import random
+import numpy as np
+import bbox_visualizer as bbv
+import cv2
+import argparse
+from PIL import Image, ImageDraw
+from torchvision import transforms
+import matplotlib
 
 import torch
 import util.misc as utils
@@ -23,7 +31,7 @@ from datasets.panoptic_eval import PanopticEvaluator
 from datasets.data_prefetcher import data_prefetcher
 from datasets.selfdet import selective_search
 from util.box_ops import box_xyxy_to_cxcywh, box_cxcywh_to_xyxy
-from util.plot_utils import plot_prediction
+# from util.plot_utils import plot_prediction
 from matplotlib import pyplot as plt
 
 def train_one_epoch(model: torch.nn.Module, swav_model: torch.nn.Module, criterion: torch.nn.Module,
@@ -195,9 +203,61 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         stats['PQ_st'] = panoptic_res["Stuff"]
     return stats, coco_evaluator
 
+
+def plot_results(pil_img, prob, boxes, ax, c, plot_prob=True, norm=True):
+    from matplotlib import pyplot as plt
+    image = plot_image(ax, pil_img, norm)
+    if prob is not None and boxes is not None:
+        for p, (xmin, ymin, xmax, ymax) in zip(prob, boxes.tolist()):
+            ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
+                                       fill=False, color=c, linewidth=1))
+            # if plot_prob:
+            #     text = ''
+            #     for prob in p:
+            #         text += f'{prob.item():0.2f}_'
+            #     ax.text(xmin, ymin, text, fontsize=15,
+            #             bbox=dict(facecolor='yellow', alpha=0.5))
+
+def plot_image(ax, img, norm):
+    if norm:
+        img = img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+        img = (img * 255)
+    img = img.astype('uint8')
+    ax.imshow(img)
+
+def plot_result(image, boxes, logits, c, ax, prob_true):
+    out_bbox = boxes[0]
+
+    # remove zero-padding
+    mask_rows = (image != 0).any(dim=0).any(dim=1)
+    mask_cols = (image != 0).any(dim=0).any(dim=0)
+    image_cropped = image[:, mask_rows, :]
+    image = image_cropped[:, :, mask_cols]
+
+    size = list(image.shape[1:])[::-1]
+    img_w, img_h = size
+    b = box_cxcywh_to_xyxy(out_bbox)
+    bboxes_scaled0 = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32).to(out_bbox)
+    # -------------------------
+    probas = logits.softmax(-1)[0, :, :-1]
+    keep = probas.max(-1).values > 0.01
+    # -------------------------
+    pil_img = image.permute(1,2,0).detach().cpu().numpy()
+    prob, pred_cls = probas[keep].max(dim=-1)
+    boxes = bboxes_scaled0[keep]
+
+    image = plot_image(ax, pil_img, True)
+    if prob is not None and boxes is not None:
+        for p, (xmin, ymin, xmax, ymax) in zip(prob, boxes.tolist()):
+            ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
+                                       fill=False, color=c, linewidth=3))
+            if prob_true:
+                ax.text(xmin, ymin, f'{p.item():0.2f}', fontsize=10, bbox=dict(facecolor='y', alpha=0.5))
+
 @torch.no_grad()
 def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
-    import numpy as np
+    from torchvision.transforms import ToPILImage
+    output_dir = 'vis'
     os.makedirs(output_dir, exist_ok=True)
     model.eval()
     criterion.eval()
@@ -214,34 +274,28 @@ def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_d
         indices = outputs['pred_logits'][0].softmax(-1)[..., 1].sort(descending=True)[1][:top_k]
         predictied_boxes = torch.stack([outputs['pred_boxes'][0][i] for i in indices]).unsqueeze(0)
         logits = torch.stack([outputs['pred_logits'][0][i] for i in indices]).unsqueeze(0)
-        fig, ax = plt.subplots(1, 3, figsize=(10,3), dpi=200)
-
-        img = samples.tensors[0].cpu().permute(1,2,0).numpy()
-        img = img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
-        img = (img * 255)
-        img = img.astype('uint8')
-        h, w = img.shape[:-1]
-
-
-        # SS results
-        boxes_ss = get_ss_res(img, h, w, top_k)
-        plot_prediction(samples.tensors[0:1], boxes_ss, torch.zeros(1, boxes_ss.shape[1], 4).to(logits), ax[0], plot_prob=False)
-        ax[0].set_title('Selective Search')
+        ax = plt.gca()
 
         # Pred results
-        plot_prediction(samples.tensors[0:1], predictied_boxes, logits, ax[1], plot_prob=False)
-        ax[1].set_title('Prediction (Ours)')
-
+        # -------------------------
+        image = samples.tensors[0:1][0]
+        boxes = predictied_boxes
+        logits = logits.cpu()
+        c = 'g'
+        plot_result(image, boxes, logits, c, ax, True)
+        # -------------------------
         # GT Results
-        plot_prediction(samples.tensors[0:1], targets[0]['boxes'].unsqueeze(0), torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits), ax[2], plot_prob=False)
-        ax[2].set_title('GT')
-
-        for i in range(3):
-            ax[i].set_aspect('equal')
-            ax[i].set_axis_off()
+        image = samples.tensors[0:1][0]
+        boxes = targets[0]['boxes'].unsqueeze(0)
+        logits = torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits)
+        c = 'r'
+        plot_result(image, boxes, logits, c, ax, False)
+        # -------------------------
+        ax.set_aspect('equal')
+        ax.set_axis_off()
 
         plt.savefig(os.path.join(output_dir, f'img_{int(targets[0]["image_id"][0])}.jpg'))
-
+        plt.clf()
 
 def get_ss_res(img, h, w, top_k):
     boxes = selective_search(img, h, w)[:top_k]

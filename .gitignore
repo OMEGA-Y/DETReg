@@ -1,0 +1,8 @@
+.lh/
+*.pyc
+wandb/
+*.npy
+models/*
+data
+exps
+datasets/*

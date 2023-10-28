@@ -6,3 +6,5 @@ models/*
 data
 exps
 datasets/*
+vis_1
+vis_2

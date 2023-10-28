@@ -20,8 +20,9 @@
                     "--dataset_file", "voc",
                     "--dataset", "voc",
                     "--eval_every", "10",
-                    "--pretrain", "exps/DETReg_fine_tune_full_pascal/checkpoint0099.pth",
-                    "--viz"
+                    "--resume", "exps/DETReg_fine_tune_full_pascal/checkpoint0099.pth",
+                    "--viz",
+                    "--eval"
                 ]
             }
         }

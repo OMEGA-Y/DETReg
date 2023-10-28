@@ -207,10 +207,9 @@ def main(args):
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
-    if args.viz:
-        viz(model, criterion, postprocessors,
-            data_loader_val, base_ds, device, args.output_dir)
-        return
+    # if args.viz:
+    #     viz(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir)
+    #     return
 
     print("Start training")
     start_time = time.time()

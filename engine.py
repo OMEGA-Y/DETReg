@@ -31,7 +31,7 @@ from datasets.panoptic_eval import PanopticEvaluator
 from datasets.data_prefetcher import data_prefetcher
 from datasets.selfdet import selective_search
 from util.box_ops import box_xyxy_to_cxcywh, box_cxcywh_to_xyxy
-# from util.plot_utils import plot_prediction
+from util.plot_utils import plot_prediction
 from matplotlib import pyplot as plt
 
 def train_one_epoch(model: torch.nn.Module, swav_model: torch.nn.Module, criterion: torch.nn.Module,
@@ -97,6 +97,12 @@ def train_one_epoch(model: torch.nn.Module, swav_model: torch.nn.Module, criteri
 
 @torch.no_grad()
 def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+    class_name = {'0': 'N/A', '1':'aeroplane','2':'bicycle','3':'bird','4':'boat',
+                  '5':'bottle','6':'bus','7':'car', '8':'cat',
+                  '9':'chair','10':'cow', '11':'diningtable','12':'dog',
+                  '13':'horse','14':'motorbike','15':'person','16':'pottedplant',
+                  '17':'sheep', '18':'sofa', '19':'train', '20':'tvmonitor'}
+    output_dir = 'vis'
     model.eval()
     criterion.eval()
 
@@ -130,6 +136,34 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             model = lambda *ignored: outputs
         
         outputs = model(samples)
+        # top_k = max(10, len(targets[0]['boxes']))
+        top_k = 10
+
+        indices = outputs['pred_logits'][0].softmax(-1)[..., 1].sort(descending=True)[1][:top_k]
+        predictied_boxes = torch.stack([outputs['pred_boxes'][0][i] for i in indices]).unsqueeze(0)
+        logits = torch.stack([outputs['pred_logits'][0][i] for i in indices]).unsqueeze(0)
+        ax = plt.gca()
+
+        # Pred results
+        # -------------------------
+        image = samples.tensors[0:1][0]
+        boxes = predictied_boxes
+        logits = logits.cpu()
+        c = 'g'
+        plot_result(image, boxes, logits, c, ax, True, class_name, targets[0]['labels'])
+        # -------------------------
+        # GT Results
+        image = samples.tensors[0:1][0]
+        boxes = targets[0]['boxes'].unsqueeze(0)
+        logits = torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits)
+        c = 'r'
+        plot_result(image, boxes, logits, c, ax, False, class_name, targets[0]['labels'])
+        # -------------------------
+        ax.set_aspect('equal')
+        ax.set_axis_off()
+
+        plt.savefig(os.path.join(output_dir, f'img_{int(targets[0]["image_id"][0])}.jpg'))
+        plt.clf()
 
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
@@ -244,33 +278,37 @@ def plot_result(image, boxes, logits, c, ax, prob_true, class_name, target_label
     # -------------------------
     pil_img = image.permute(1,2,0).detach().cpu().numpy()
     prob, pred_cls = probas[keep].max(dim=-1)
-    label_list = [] 
-    for i in range(len(target_label)):
-        target_label[i] += 1    
-        target_label[i] = torch.clamp(target_label[i], max=20)
-        label_list.append(class_name[str(target_label[i].item())])
+    label_list = []
+    if not prob_true:
+        for i in range(len(target_label)):
+            target_label[i] += 1
+            target_label[i] = torch.clamp(target_label[i], max=20)
+            label_list.append(class_name[str(target_label[i].item())])
+    else:
+        for i in range(len(pred_cls)):
+            pred_cls[i] += 1
+            pred_cls[i] = torch.clamp(pred_cls[i], max=20)
+            label_list.append(class_name[str(pred_cls[i].item())])
     boxes = bboxes_scaled0[keep]
 
     image = plot_image(ax, pil_img, True)
     if prob is not None and boxes is not None:
         for p, (xmin, ymin, xmax, ymax), label in zip(prob, boxes.tolist(), label_list):
             ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
-                                       fill=False, color=c, linewidth=3))
+                                       fill=False, color=c, linewidth=2))
             if prob_true:
-                ax.text(xmin, ymin, f'{p.item():0.2f}', fontsize=10, bbox=dict(facecolor='y', alpha=0.5))
+                ax.text(xmin, ymin, label, fontsize=10, bbox=dict(facecolor='g', alpha=0.7))
             else:
-                ax.text(xmin, ymin, label, fontsize=10, bbox=dict(facecolor='y', alpha=0.5))
+                ax.text(xmin, ymax, label, fontsize=10, bbox=dict(facecolor='r', alpha=0.7))
 
 @torch.no_grad()
 def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
-    from torchvision.transforms import ToPILImage
-    class_name = {'1':'aeroplane','2':'bicycle','3':'bird','4':'boat',
+    class_name = {'0': 'N/A', '1':'aeroplane','2':'bicycle','3':'bird','4':'boat',
                   '5':'bottle','6':'bus','7':'car', '8':'cat',
                   '9':'chair','10':'cow', '11':'diningtable','12':'dog',
                   '13':'horse','14':'motorbike','15':'person','16':'pottedplant',
                   '17':'sheep', '18':'sofa', '19':'train', '20':'tvmonitor'}
     output_dir = 'vis'
-    os.makedirs(output_dir, exist_ok=True)
     model.eval()
     criterion.eval()
 
@@ -294,7 +332,7 @@ def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_d
         boxes = predictied_boxes
         logits = logits.cpu()
         c = 'g'
-        plot_result(image, boxes, logits, c, ax, True, class_name, targets[0]['labels']
+        plot_result(image, boxes, logits, c, ax, True, class_name, targets[0]['labels'])
         # -------------------------
         # GT Results
         image = samples.tensors[0:1][0]
@@ -308,6 +346,53 @@ def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_d
 
         plt.savefig(os.path.join(output_dir, f'img_{int(targets[0]["image_id"][0])}.jpg'))
         plt.clf()
+
+# @torch.no_grad()
+# def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+#     import numpy as np
+#     os.makedirs(output_dir, exist_ok=True)
+#     model.eval()
+#     criterion.eval()
+# 
+#     metric_logger = utils.MetricLogger(delimiter="  ")
+#     metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+# 
+#     for samples, targets in data_loader:
+#         samples = samples.to(device)
+#         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+#         top_k = len(targets[0]['boxes'])
+# 
+#         outputs = model(samples)
+#         indices = outputs['pred_logits'][0].softmax(-1)[..., 1].sort(descending=True)[1][:top_k]
+#         predictied_boxes = torch.stack([outputs['pred_boxes'][0][i] for i in indices]).unsqueeze(0)
+#         logits = torch.stack([outputs['pred_logits'][0][i] for i in indices]).unsqueeze(0)
+#         fig, ax = plt.subplots(1, 3, figsize=(10,3), dpi=200)
+# 
+#         img = samples.tensors[0].cpu().permute(1,2,0).numpy()
+#         img = img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+#         img = (img * 255)
+#         img = img.astype('uint8')
+#         h, w = img.shape[:-1]
+# 
+# 
+#         # SS results
+#         boxes_ss = get_ss_res(img, h, w, top_k)
+#         plot_prediction(samples.tensors[0:1], boxes_ss, torch.zeros(1, boxes_ss.shape[1], 4).to(logits), ax[0], plot_prob=False)
+#         ax[0].set_title('Selective Search')
+# 
+#         # Pred results
+#         plot_prediction(samples.tensors[0:1], predictied_boxes, logits, ax[1], plot_prob=False)
+#         ax[1].set_title('Prediction (Ours)')
+# 
+#         # GT Results
+#         plot_prediction(samples.tensors[0:1], targets[0]['boxes'].unsqueeze(0), torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits), ax[2], plot_prob=False)
+#         ax[2].set_title('GT')
+# 
+#         for i in range(3):
+#             ax[i].set_aspect('equal')
+#             ax[i].set_axis_off()
+# 
+#         plt.savefig(os.path.join(output_dir, f'img_{int(targets[0]["image_id"][0])}.jpg'))
 
 def get_ss_res(img, h, w, top_k):
     boxes = selective_search(img, h, w)[:top_k]

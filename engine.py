@@ -126,6 +126,17 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
+        image_filenames = [
+            'img_2021000247.jpg',
+            'img_2021000706.jpg',
+            'img_2021001070.jpg',
+            'img_2021003055.jpg',
+            'img_2021007554.jpg',
+            'img_2021008746.jpg'
+        ]
+
+        name = 'img_' + str(targets[0]["image_id"][0].item()) + '.jpg'
+
         if 'loaddet' in output_dir:
             outputs = dict(pred_logits = [], pred_boxes = [])
             for i, target in enumerate(targets):
@@ -149,15 +160,76 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         image = samples.tensors[0:1][0]
         boxes = predictied_boxes
         logits = logits.cpu()
-        c = 'g'
-        plot_result(image, boxes, logits, c, ax, True, class_name, targets[0]['labels'])
+
+        # -------------------------
+        # Measure AP 
+        probas = logits.softmax(-1)[0, :, :-1]
+        values, indices = probas.max(-1)
+        keep = probas.max(-1).values > 0.01
+        values = values[keep]
+        indices = indices[keep]
+        gts = targets[0]['boxes'].unsqueeze(0)
+        gt_cls = targets[0]['labels']
+
+        from sklearn.metrics import average_precision_score
+        for ind in range(len(gt_cls.unique())):
+
+            cls_num = gt_cls[ind].cpu()
+            cls_pred = values[indices == cls_num]
+            cls_gt_box = gts[:, gt_cls == cls_num].view(-1,4)
+
+            if len(cls_pred) != 0:
+                cls_pred_np = cls_pred.cpu().numpy()
+                cls_gt_box_np = cls_gt_box.cpu().numpy()
+
+                # Sorting predictions by scores in descending order
+                sort_indices = cls_pred_np.argsort()[::-1]
+                cls_pred_np = cls_pred_np[sort_indices]
+
+
+                # PASCAL VOC AP
+                true_positives = (cls_pred_np > 0.5)
+
+                # Calculate precision and recall
+                precision = true_positives.cumsum() / (np.arange(len(cls_pred_np)) + 1)
+                recall = true_positives.cumsum() / len(cls_gt_box_np)
+
+                # Calculate Average Precision
+                ap = average_precision_score(true_positives, precision)
+
+                if name in image_filenames:
+                      with open('./ap.txt', 'a') as file:
+                          file.write(f"{name} {ap}\n")
+
+                # MS COCO AP
+                aps = []
+                thresholds = np.linspace(0, 1, 101)  # Adjust the number of thresholds as needed
+                for threshold in thresholds:
+                    # Calculate true positives
+                    true_positives = (cls_pred_np > threshold)
+
+                    # Calculate precision and recall
+                    precision = true_positives.cumsum() / (np.arange(len(cls_pred_np)) + 1)
+                    recall = true_positives.cumsum() / len(cls_gt_box_np)
+
+                    # Calculate Average Precision
+                    ap = average_precision_score(true_positives, precision)
+                    aps.append(ap)
+                ap = sum(aps) / len(aps)
+            else:
+                ap = 0
+            print(f'AP for class {cls_num.item()}: {ap}')
+
+
+        # c = 'g'
+        # plot_result(image, boxes, logits, c, ax, True, class_name, targets[0]['labels'])
         # -------------------------
         # GT Results
-        image = samples.tensors[0:1][0]
-        boxes = targets[0]['boxes'].unsqueeze(0)
-        logits = torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits)
-        c = 'r'
-        plot_result(image, boxes, logits, c, ax, False, class_name, targets[0]['labels'])
+        # image = samples.tensors[0:1][0]
+        # boxes = targets[0]['boxes'].unsqueeze(0)
+        # logits = torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits)
+        # c = 'r'
+        # plot_result(image, boxes, logits, c, ax, False, class_name, targets[0]['labels'])
         # -------------------------
         ax.set_aspect('equal')
         ax.set_axis_off()
@@ -211,30 +283,30 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             panoptic_evaluator.update(res_pano)
 
     # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
-    if coco_evaluator is not None:
-        coco_evaluator.synchronize_between_processes()
-    if panoptic_evaluator is not None:
-        panoptic_evaluator.synchronize_between_processes()
+    # metric_logger.synchronize_between_processes()
+    # print("Averaged stats:", metric_logger)
+    # if coco_evaluator is not None:
+    #     coco_evaluator.synchronize_between_processes()
+    # if panoptic_evaluator is not None:
+    #     panoptic_evaluator.synchronize_between_processes()
 
-    # accumulate predictions from all images
-    if coco_evaluator is not None:
-        coco_evaluator.accumulate()
-        coco_evaluator.summarize()
-    panoptic_res = None
-    if panoptic_evaluator is not None:
-        panoptic_res = panoptic_evaluator.summarize()
-    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    if coco_evaluator is not None:
-        if 'bbox' in postprocessors.keys():
-            stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
-        if 'segm' in postprocessors.keys():
-            stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
-    if panoptic_res is not None:
-        stats['PQ_all'] = panoptic_res["All"]
-        stats['PQ_th'] = panoptic_res["Things"]
-        stats['PQ_st'] = panoptic_res["Stuff"]
+    # # accumulate predictions from all images
+    # if coco_evaluator is not None:
+    #     coco_evaluator.accumulate()
+    #     coco_evaluator.summarize()
+    # panoptic_res = None
+    # if panoptic_evaluator is not None:
+    #     panoptic_res = panoptic_evaluator.summarize()
+    # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    # if coco_evaluator is not None:
+    #     if 'bbox' in postprocessors.keys():
+    #         stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
+    #     if 'segm' in postprocessors.keys():
+    #         stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
+    # if panoptic_res is not None:
+    #     stats['PQ_all'] = panoptic_res["All"]
+    #     stats['PQ_th'] = panoptic_res["Things"]
+    #     stats['PQ_st'] = panoptic_res["Stuff"]
     return stats, coco_evaluator
 
 
